@@ -1,0 +1,13 @@
+build/
+*.o
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+
+## Editor junk
+.vscode/
+.idea/
+*.swp
+.DS_Store

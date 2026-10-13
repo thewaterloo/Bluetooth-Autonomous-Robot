@@ -11,9 +11,9 @@ Makefile that builds with `avr-gcc` and flashes with `avrdude`.
   UART from an HC-05 module and drive the H-bridge accordingly.
 - **Autonomous mode** — a PID holds a target front clearance using the
   HC-SR04 ultrasonic sensor, while two side-facing digital IR sensors
-  deliver reflexive sub-10 ms turns when objects appear in the robot's
-  shoulders. The IR reflex path bypasses the PID for guaranteed latency.
-- **Telemetry** — every 200 ms the firmware streams `mode / distance /
+  take priority over the PID when objects appear at the robot's sides.
+  Sensor polling is synchronous, so response latency depends on echo timeout.
+- **Telemetry** — every ten control iterations the firmware streams `mode / distance /
   IR flags / left PWM / right PWM` back over the same UART, so you can
   watch the robot's decisions live in any serial terminal app.
 - Mode is toggled at runtime with `A` (auto) and `M` (manual).
@@ -26,7 +26,7 @@ HC-05 ───│  uart.cpp     │── RX ring buffer (ISR)
          └──────┬────────┘
                 │ commands / telemetry
          ┌──────▼────────┐
-         │  main.cpp     │── 50 Hz control loop
+         │  main.cpp     │── sensor/control loop
          └──┬──────┬──┬──┘
             │      │  │
     ┌───────▼┐ ┌───▼─┐│┌──────────┐
@@ -53,7 +53,7 @@ Nothing global except the state inside `main.cpp`.
 | Side sensors   | 2× TCRT5000 IR module | Digital, active-low on obstacle     |
 | Bluetooth      | HC-05                 | 9600 baud, 8N1                      |
 
-See [`docs/wiring.md`](docs/wiring.md) for the full pin-by-pin hookup.
+See [`wiring.md`](wiring.md) for the full pin-by-pin hookup.
 
 ## Building
 
@@ -95,11 +95,12 @@ mode=MAN  d=--- ir=-- L=0   R=0
 
 ## Tuning
 
-Everything worth changing lives in `src/config.h`:
+Hardware constants and limits live in `config.h`:
 
 - `OBSTACLE_CM` — trigger distance for the back-and-turn behaviour
 - `CRUISE_SPEED`, `TURN_SPEED` — PWM caps
-- `CONTROL_PERIOD_MS` — loop rate (20 ms → 50 Hz by default)
+- `CONTROL_PERIOD_MS` — minimum loop delay; synchronous sensor reads and
+  UART output extend the actual period
 
 PID gains are set where the controller is instantiated in `main.cpp`
 (`PID speed_pid(8.0f, 0.5f, 1.0f, ...)`). Start by zeroing Ki/Kd and

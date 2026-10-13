@@ -6,14 +6,14 @@
 //   MANUAL      - Bluetooth 'F/B/L/R/S' commands drive the motors directly.
 //   AUTONOMOUS  - PID maintains a cruise speed based on front ultrasonic
 //                 clearance; IR side sensors trigger immediate evasive turns
-//                 for sub-10 ms obstacle response.
+//                 at the next control update (subject to sensor latency).
 //
 // Mode is toggled at runtime with 'A' (auto) / 'M' (manual) over UART0.
 // Telemetry (mode / distance / IR / left / right) is streamed back at 5 Hz.
 //
-// Control loop runs at 50 Hz via a busy-wait on _delay_ms — simple and
-// deterministic. Ultrasonic reads are interleaved so no one iteration
-// blocks for the full echo timeout in the common case.
+// Control loop pauses at least 20 ms per iteration; synchronous ultrasonic
+// reads and UART writes increase the actual period. Time-critical response
+// requires a nonblocking sensor scheduler in a future hardware revision.
 // =============================================================================
 #include "config.h"
 #include "uart.h"
@@ -86,7 +86,7 @@ void compute_drive(int16_t& left, int16_t& right) {
     bool ir = ir_sensor::right_blocked();
 
     // Reflexive evasion: IR side sensors take priority over PID cruise. This
-    // is the sub-10 ms obstacle avoidance path.
+    // is evaluated after the current synchronous sensor read completes.
     if (il && ir) {
         left  = -TURN_SPEED;
         right =  TURN_SPEED;           // both blocked: spin left
@@ -95,14 +95,22 @@ void compute_drive(int16_t& left, int16_t& right) {
     if (il) { left =  TURN_SPEED; right = -TURN_SPEED; return; } // veer right
     if (ir) { left = -TURN_SPEED; right =  TURN_SPEED; return; } // veer left
 
+    // A missing echo is not evidence of a clear path.
+    if (last_dist == UINT16_MAX) {
+        speed_pid.reset();
+        left = right = 0;
+        return;
+    }
+
     // Front ultrasonic drives a PID on "desired clearance".
     // Setpoint = OBSTACLE_CM + headroom; below that, error goes negative and
     // the PID commands reverse; above, it cruises forward.
     const float setpoint_cm = static_cast<float>(OBSTACLE_CM + 15);
-    float measured = (last_dist == UINT16_MAX) ? 200.0f
-                                               : static_cast<float>(last_dist);
+    float measured = static_cast<float>(last_dist);
     float dt = CONTROL_PERIOD_MS / 1000.0f;
-    float u  = speed_pid.update(setpoint_cm, measured, dt);
+    // Increasing clearance permits forward motion; reverse the sign of the
+    // clearance error used by PID so distant obstacles cannot command reverse.
+    float u  = speed_pid.update(measured, setpoint_cm, dt);
 
     // Hard stop if we've crossed the obstacle line even if PID is still settling.
     if (last_dist != UINT16_MAX && last_dist < OBSTACLE_CM) {
@@ -121,7 +129,7 @@ void compute_drive(int16_t& left, int16_t& right) {
 
 // ------------------------------------------------------------------ telemetry
 void emit_telemetry(int16_t left, int16_t right) {
-    if (++tel_divider < 10) return;    // 50 Hz / 10 = 5 Hz
+    if (++tel_divider < 10) return;    // every ten control iterations
     tel_divider = 0;
 
     uart::tx_str("mode=");
@@ -153,9 +161,8 @@ int main() {
     for (;;) {
         drain_uart();
 
-        // Ultrasonic every iteration — read is non-blocking on success, up
-        // to ~30 ms on timeout. Obstacle-avoidance reflex uses IR, so a slow
-        // ultrasonic read never compromises safety.
+        // Ultrasonic polling may block for up to the echo timeout. Keep
+        // telemetry and control-loop timing claims conditional on that delay.
         last_dist = ultrasonic::read_cm();
 
         int16_t left, right;

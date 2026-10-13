@@ -15,7 +15,7 @@ MCU      := atmega328p
 F_CPU    := 16000000UL
 PROG     := firmware
 BUILD    := build
-SRC_DIR  := src
+SRC_DIR  := .
 
 PORT     ?= /dev/ttyUSB0
 BAUD     ?= 115200
@@ -33,15 +33,15 @@ CXXFLAGS := -Os -Wall -Wextra -ffunction-sections -fdata-sections \
             -fno-exceptions -fno-rtti -std=gnu++17
 LDFLAGS  := -mmcu=$(MCU) -Wl,--gc-sections
 
-SRCS := $(wildcard $(SRC_DIR)/*.cpp)
-OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD)/%.o,$(SRCS))
+SRCS := $(wildcard *.cpp)
+OBJS := $(patsubst %.cpp,$(BUILD)/%.o,$(SRCS))
 
 all: $(BUILD)/$(PROG).hex size
 
 $(BUILD):
 	@mkdir -p $@
 
-$(BUILD)/%.o: $(SRC_DIR)/%.cpp | $(BUILD)
+$(BUILD)/%.o: %.cpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD)/$(PROG).elf: $(OBJS)
